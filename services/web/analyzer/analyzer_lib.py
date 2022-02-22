@@ -271,4 +271,26 @@ class Analyzer:
         self,
         text_column_name: str,
         category_column_name: str,
-        data_view: RichDataView
+        data_view: RichDataView,
+        count: int = 20,
+    ) -> Dict[str, Dict[str, float]]:
+        tex_col = text_column_name
+        cat_col = category_column_name
+
+        df = self._get_df(data_view)
+
+        categories = df[cat_col].unique()
+
+        vectorizer = CountVectorizer(stop_words=stop_words)
+        result = vectorizer.fit_transform(
+            [' '.join(df[df[cat_col] == c][tex_col].tolist()) for c in categories]
+        )
+
+        words = vectorizer.get_feature_names()
+        words_by_categories = pd.DataFrame(
+            result.todense(), index=categories, columns=words,
+        )
+        categories_by_words = words_by_categories.T
+
+        # extract top n by_category
+        return {c: categories_by_words[c].nlargest(count).to_dict() for c in categories}
