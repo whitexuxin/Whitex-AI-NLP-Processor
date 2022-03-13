@@ -208,4 +208,212 @@ def add_tags() -> str:
             data_view_id=data_view_id,
         )
         return jsonify(dict(primary_key=primary_key, tags=list(updated_tags)))
-    except Val
+    except ValueError as exc:
+        return jsonify(dict(error=5, msg=str(exc)))
+
+
+@app.route("/remove_tags", methods=["GET"])
+def remove_tags() -> str:
+    key_data_view_id = "data_view_id"
+    key_primary_key = "primary_key"
+    key_primary_key_name = "primary_key_name"
+    key_tags = "tags"
+
+    payload = extract_payload()
+
+    data_view_id_str: str = payload.get(key_data_view_id, None)
+    primary_key: str = payload.get(key_primary_key, None)
+    primary_key_name: str = payload.get(key_primary_key_name, None)
+    tags: List[str] = payload.get(key_tags, None)
+
+    if not data_view_id_str:
+        return jsonify(dict(error=1, msg="no data_view_id specified"))
+    elif not primary_key:
+        return jsonify(dict(error=2, msg="no primary_key specified"))
+    elif not primary_key_name:
+        return jsonify(dict(error=3, msg="no primary_key_name specified"))
+    elif not tags:
+        return jsonify(dict(error=4, msg="no tags specified"))
+
+    data_view_id = DataViewId(data_view_id_str)
+
+    try:
+        updated_tags = session.remove_tags(
+            tags=tags,
+            primary_keys=[primary_key],
+            primary_key_name=primary_key_name,
+            data_view_id=data_view_id,
+        )
+        return jsonify(dict(primary_key=primary_key, tags=list(updated_tags)))
+    except ValueError as exc:
+        return jsonify(dict(error=5, msg=str(exc)))
+
+
+@app.route("/get_tags", methods=["GET"])
+def get_tags() -> str:
+    key_data_view_id = "data_view_id"
+    key_primary_keys = "primary_keys"
+
+    payload = extract_payload()
+
+    data_view_id_str: str = payload.get(key_data_view_id, None)
+    primary_keys: List[str] = payload.get(key_primary_keys, [])
+
+    data_view_id = DataViewId(data_view_id_str)
+
+    try:
+        tag_map = session.get_tags(primary_keys, data_view_id)
+        return jsonify(tag_map)
+    except ValueError as exc:
+        return jsonify(dict(error=5, msg=str(exc)))
+
+
+@app.route("/raw_data_for_data_view")
+def raw_data_for_data_view():
+    key_data_view_id = "data_view_id"
+    key_sort_label = "sort_label"
+    key_sort_direction = "sort_dir"
+    try:
+        payload = extract_payload()
+        data_view_id = DataViewId(payload[key_data_view_id])
+        sort_label = payload[key_sort_label] if key_sort_label in payload else None
+
+        sort_dir = payload.get(key_sort_direction, None)
+        if sort_dir == "asc":
+            sort_asc = True
+        elif sort_dir == "desc":
+            sort_asc = False
+        else:
+            sort_asc = None
+
+        entries = session.raw_data_for_data_view(data_view_id, sort_label, sort_asc)
+        return jsonify(dict(entries=entries))
+    except ValueError as exc:
+        return jsonify(dict(error=1, msg=str(exc), entries=-1))
+
+
+@app.route("/raw_entries_and_tags_for_data_view")
+def raw_entries_and_tags_for_data_view():
+    key_data_view_id = "data_view_id"
+    key_sort_label = "sort_label"
+    key_sort_direction = "sort_dir"
+    try:
+        payload = extract_payload()
+        data_view_id = DataViewId(payload[key_data_view_id])
+        sort_label = payload[key_sort_label] if key_sort_label in payload else None
+
+        sort_dir = payload.get(key_sort_direction, None)
+        if sort_dir == "asc":
+            sort_asc = True
+        elif sort_dir == "desc":
+            sort_asc = False
+        else:
+            sort_asc = None
+
+        entries, tags_by_key = session.raw_entries_and_tags(data_view_id, sort_label, sort_asc)
+
+        return jsonify(dict(entries=entries, tags_by_key=tags_by_key))
+    except ValueError as exc:
+        return jsonify(dict(error=1, msg=str(exc), entries=-1))
+
+
+@app.route("/get_transform_defs")
+def get_transform_defs():
+    return jsonify([c.serialize() for c in session.get_transform_defs()])
+
+
+@app.route("/transform_data_view", methods=["GET"])
+def transform_data_view():
+    key_data_view_id = "data_view_id"
+    key_add_transforms = "add_transforms"
+    key_del_transforms = "del_transforms"
+
+    payload = extract_payload()
+
+    try:
+        add_transforms = TransformList.deserialize(payload[key_add_transforms])
+        del_transforms = TransformList.deserialize(payload[key_del_transforms])
+        data_view_id = DataViewId(payload[key_data_view_id])
+
+        data_view = session.transform_data_view(data_view_id, add_transforms, del_transforms)
+        data_view_id = data_view.id
+
+        return jsonify(
+            dict(
+                data_view_id=data_view_id,
+                data_view=data_view.serialize(),
+                error=0,
+                msg="",
+            )
+        )
+    except ValueError as exc:
+        return jsonify(
+            dict(
+                data_view_id=-1,
+                data_view=-1,
+                error=1,
+                msg=str(exc),
+            )
+        )
+
+
+@app.route("/count_unique", methods=["GET"])
+def count_unique():
+    key_column = "column"
+    key_data_view_id = "data_view_id"
+
+    payload = extract_payload()
+
+    column_name = payload[key_column]
+    data_view_id = payload[key_data_view_id]
+
+    log.info(f"column_name {column_name} data_view_id {data_view_id}")
+
+    response = session.count_uniques(column_name, data_view_id)
+
+    return jsonify(response.serialize())
+
+
+@app.route("/tf_idf_over_values", methods=["GET"])
+def tf_idf_over_values():
+    key_text_column = "text_column"
+    key_category_column = "category_column"
+    key_data_view_id = "data_view_id"
+
+    payload = extract_payload()
+
+    text_column_name = payload[key_text_column]
+    category_column_name = payload[key_category_column]
+    data_view_id = payload[key_data_view_id]
+
+    response = session.tf_idf_over_values(
+        text_column_name=text_column_name,
+        category_column_name=category_column_name,
+        data_view_id=data_view_id,
+    )
+
+    return jsonify(response.serialize())
+
+
+@app.route("/word_counts_over_time", methods=["GET"])
+def word_counts_over_time():
+    key_text_column = "text_column"
+    key_date_time_column = "date_time_column"
+    key_data_view_id = "data_view_id"
+
+    payload = extract_payload()
+
+    text_column_name = payload[key_text_column]
+    date_time_column_name = payload[key_date_time_column]
+    data_view_id = payload[key_data_view_id]
+
+    response = session.word_counts_over_time(
+        text_column_name=text_column_name,
+        date_time_column_name=date_time_column_name,
+        data_view_id=data_view_id,
+    )
+
+    return jsonify(response.serialize())
+
+
+@app.route("/cat
