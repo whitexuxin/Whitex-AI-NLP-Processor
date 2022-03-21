@@ -447,3 +447,275 @@ class CorpusProcessor:
                     if any([
                         token.startswith(category_spc),
                         token.endswith(spc_category),
+                        spc_category_spc in token,
+                    ]):
+                        do_modification = True
+
+                elif category in token:
+                    do_modification = True
+
+                if do_modification:
+                    # log.info(f"Merging {token} into {category}")
+                    category_tree[category].append(token)
+                    counts_by_category[category] += count
+
+        self.debug_counts_by_category = counts_by_category
+
+        counts_and_categories = sorted(
+            [(counts_by_category[category], category) for category in category_tree.keys()],
+            reverse=True
+        )
+
+        pruned_category_tree = {
+            cat: category_tree[cat] for _, cat in counts_and_categories[:num_categories]
+        }
+
+        return pruned_category_tree
+
+    def _merge_lower_rank_categories(
+        self,
+        category_tree: CategoryTree,
+        token_counts: Counter,
+    ) -> DefaultDict[str, List[str]]:
+        is_oov = self._text_processor.is_oov
+        short_token_len = 4
+
+        tokens_by_rank = deque(
+            chain(
+                (t for t, _ in token_counts.most_common(300) if SPACE not in t and len(t) > 2),
+                (t for t, _ in token_counts.most_common(300) if SPACE in t),
+            )
+        )
+
+        category_tree = deepcopy(category_tree)
+
+        while tokens_by_rank:
+            token = tokens_by_rank.popleft()
+            is_short_token = len(token) < short_token_len
+
+            tokens_to_remove = []
+
+            token_spc = token + SPACE
+            spc_token = SPACE + token
+            spc_token_spc = spc_token + SPACE
+
+            for lower_rank_token in tokens_by_rank:
+                do_modification = False
+                if (is_oov(token) or is_short_token) and any([
+                    lower_rank_token.startswith(token_spc),
+                    lower_rank_token.endswith(spc_token),
+                    spc_token_spc in lower_rank_token,
+                ]):
+                    do_modification = True
+
+                elif token in lower_rank_token or lower_rank_token in token:
+                    do_modification = True
+
+                if do_modification:
+                    try:
+                        if lower_rank_token not in category_tree[token]:
+                            category_tree[token].append(lower_rank_token)
+                    except KeyError:
+                        continue
+
+                    tokens_to_remove.append(lower_rank_token)
+
+            for remove_token in tokens_to_remove:
+                log.debug(f"removing '{remove_token}' from queue, into '{token}'")
+                tokens_by_rank.remove(remove_token)
+
+        return category_tree
+
+    def _build_language_model(self, category: str, category_tree: CategoryTree) -> None:
+        tokens_by_id = self._tokens_by_id
+        token_entry_lookup = self._token_entry_lookup
+
+        min_len = 3
+
+        lm = self.lm_by_category[category]
+        lm.clear()
+        for subcategory in category_tree[category]:
+
+            lm_sub = self.lm_by_subcategory[category][subcategory]
+            lm_sub.clear()
+            for token_entry in token_entry_lookup[subcategory]:
+                subcategory_tokens = [t for t in tokens_by_id[token_entry.id] if len(t) >= min_len]
+                lm.update(subcategory_tokens)
+                lm_sub.update(subcategory_tokens)
+
+    def _build_language_models(self, category_tree: CategoryTree):
+        for category in category_tree:
+            self._build_language_model(category=category, category_tree=category_tree)
+
+        category_tree = self._merge_categories_on_lm_similarity(category_tree)
+
+        return category_tree
+
+    def _merge_categories_on_lm_similarity(self, category_tree: CategoryTree) -> CategoryTree:
+        threshold = 1
+        category_tree = deepcopy(category_tree)
+        lm_by_category = self.lm_by_category
+
+        categories = deque(category_tree.keys())
+        while categories:
+            c1 = categories.popleft()
+            lesser_categories = deque(categories)
+            for c2 in lesser_categories:
+
+                val = self.compare_language_models(lm_by_category[c1], lm_by_category[c2])
+                if val <= threshold:
+                    category_tree[c1].extend(category_tree[c2])
+                    category_tree[c1] = list(set(category_tree[c1]))
+                    categories.remove(c2)
+                    del category_tree[c2]
+
+        return category_tree
+
+    @classmethod
+    def compare_language_models(cls, lm1: Counter, lm2: Counter) -> float:
+        common_vocab = lm1.keys() ^ lm2.keys()
+        common_counts = [[lm.get(v, 0.001) for v in common_vocab] for lm in (lm1, lm2)]
+        return entropy(*common_counts)
+
+    def _get_best_category_for_text(self, category, text) -> Optional[List[Tuple[str, str]]]:
+        for category_term in set(category.split(SPACE)):
+            if category_term in text:
+                break
+        else:
+            return []
+
+        best_subcategory = self.DEFAULT_SUBCATEGORY
+        best_len = 0
+        for subcategory in self._category_tree[category]:
+
+            subcategory_terms = set(subcategory.split(SPACE))
+            if category_term in subcategory_terms:
+                subcategory_terms.remove(category_term)
+
+            for subcategory_term in subcategory_terms:
+                if subcategory_term in text:
+                    subcategory_len = len(subcategory)
+                    if subcategory_len > best_len:
+                        best_subcategory = subcategory
+                        best_len = subcategory_len
+                    break
+
+        return [(category, best_subcategory)]
+
+    def _get_best_language_model_for_text(self, text: str) -> List[Tuple[str, str]]:
+        threshold = 8.0
+
+        category_tree = self._category_tree
+        scored_similarities: List[Tuple[float, (str, str)]] = []
+        for category in category_tree:
+            lm = self.lm_by_category[category]
+            text_lm = Counter([t for t in text.split(SPACE) if t not in STOP_WORDS])
+
+            score = self.compare_language_models(text_lm, lm)
+
+            scored_similarities.append((score, (category, self.DEFAULT_SUBCATEGORY)))
+        # log.info(f"'{text}' {sorted(scored_similarities)}")
+
+        sorted_scored_similarities = sorted(scored_similarities)
+        if sorted_scored_similarities[0][0] > threshold:
+            return [self.DEFAULT_PAIR]
+        return [
+            c for score, c in scored_similarities if score < threshold
+        ]
+
+    def categorize_text(self, text: str) -> List[Tuple[str, str]]:
+        text = self._text_processor.cleanse_text(text)
+        text = text.lower().strip()
+
+        if not text:
+            return [self.DEFAULT_PAIR]
+
+        category_tree = self._category_tree
+
+        assignments = []
+        for category in category_tree:
+            result = self._get_best_category_for_text(category, text)
+            if result:
+                assignments.extend(result)
+
+        if not assignments:
+            result = self._get_best_language_model_for_text(text)
+            if result:
+                assignments.extend(result)
+        return assignments
+
+    def categorize_by_entry_id(self, entry_id: EntryId) -> List[Tuple[str, str]]:
+        if entry_id not in self.text_by_id:
+            return [self.DEFAULT_PAIR]
+        entry_text = self.text_by_id[entry_id].strip()
+        if not entry_text:
+            return [self.DEFAULT_PAIR]
+
+        return self.categorize_text(entry_text)
+
+    def categorize_by_pkey(self, pkey: str) -> List[Tuple[str, str]]:
+        entry_id = self._id_by_pkey.get(pkey, None)
+        if not entry_id:
+            return [self.DEFAULT_PAIR]
+
+        return self.categorize_by_entry_id(entry_id)
+
+
+class AutoCatHandler:
+    KEY_AGE = "autocat1_age"
+
+    def __init__(self):
+        self.exclude_words = {"information", "info", "question", "answer", "help"}
+        self.text_processor = None
+        self.corpus = None
+
+    def load_corpus(
+        self,
+        df: DataFrame,
+        pkey_column_name: str,
+        text_column_name: str,
+        date_column_name: str,
+    ):
+        self.text_processor = TextProcessor(parser=spacy_parser)
+
+        max_timestamp = df[date_column_name].max()
+        df[self.KEY_AGE] = (max_timestamp - df[date_column_name]).dt.days
+
+        self.corpus = Corpus.from_df(
+            df=df,
+            pkey_column_name=pkey_column_name,
+            text_column_name=text_column_name,
+            age_column_name=self.KEY_AGE,
+            text_processor=self.text_processor,
+        )
+
+    def build_model(self, entry_ids: Optional[List[EntryId]] = None) -> CorpusProcessor:
+        if not self.corpus:
+            raise ValueError("Corpus has not been loaded")
+
+        corpus_processor = CorpusProcessor(self.corpus, self.exclude_words)
+        corpus_processor.build_model(entry_ids)
+        return corpus_processor
+
+    def pkeys_to_entry_ids(self, pkeys: List[str]) -> List[EntryId]:
+        if not self.corpus:
+            log.info(f"Corpus is {self.corpus}")
+            raise ValueError()
+
+        id_by_pkey = self.corpus.id_by_pkey
+        entry_ids = []
+        missing = present = 0
+        for pkey in pkeys:
+
+            try:
+                entry_ids.append(id_by_pkey[pkey])
+                present += 1
+
+            except KeyError:
+                log.info(f"pkeys were missing: {pkey}")
+                missing += 1
+
+        return entry_ids
+
+
+autocat_handler = AutoCatHandler()
