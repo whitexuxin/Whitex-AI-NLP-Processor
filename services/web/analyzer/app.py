@@ -416,4 +416,79 @@ def word_counts_over_time():
     return jsonify(response.serialize())
 
 
-@app.route("/cat
+@app.route("/categories")
+def categories():
+    sample_categories = {
+        "passports": [
+            "application",
+            "renewal",
+            "forms",
+            "process",
+            "visas",
+            "help",
+            "vacation",
+            "travel",
+            "wizard",
+            "expiration",
+            "post office",
+        ],
+        "coronavirus": [
+            "stimulus/check",
+            "outbreak",
+            "local",
+            "concern",
+            "task force",
+            "closed",
+            "businesses",
+        ],
+        "voting": [
+            "elections",
+            "registration",
+            "officials",
+            "selective service",
+            "absentee",
+            "driver license",
+        ],
+        "jobs": [
+            "small business",
+            "fraud",
+            "scams",
+            "applications",
+            "unemployment",
+            "compensation",
+            "benefits",
+        ],
+        "money": [
+            "unclaimed",
+            "credit report",
+            "social security",
+            "fraud",
+            "scam",
+            "phishing",
+        ],
+        "license": [
+            "marriage",
+            "birth",
+            "replacement birth certificate",
+            "social security card",
+            "replacement",
+        ],
+        "tax": [
+            "refund",
+            "direct deposit",
+            "state",
+            "website",
+            "federal tax refund",
+            "clear instruction",
+            "credit card",
+            "consumer action",
+            "low income",
+
+        ]
+    }
+    return jsonify(sample_categories)
+
+
+@app.route("/hello_world")
+def hello_world():
+    return jsonify(hello="world")
