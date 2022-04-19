@@ -271,4 +271,64 @@ class Session:
             return QueryErrorResponse("No active DataView")
 
         historical_counts = self._analyzer.word_counts_over_time(
-            date_ti
+            date_time_column_name=date_time_column_name,
+            text_column_name=text_column_name,
+            data_view=data_view,
+        )
+
+        return QueryResponse(data=historical_counts)
+
+    def raw_data_for_data_view(
+        self,
+        data_view_id: DataViewId,
+        sort_label: Optional[str] = None,
+        sort_asc: Optional[bool] = None,
+    ):
+        return self._analyzer.raw_data_for_data_view(
+            data_view=self.rich_data_view(data_view_id),
+            sort_label=sort_label,
+            sort_asc=sort_asc,
+        )
+
+    def raw_entries_and_tags(
+        self,
+        data_view_id: DataViewId,
+        sort_label: Optional[str] = None,
+        sort_asc: Optional[bool] = None,
+    ) -> Tuple[Dict, Dict[str, List[str]]]:
+        data_view = self.rich_data_view(data_view_id)
+
+        entries = self._analyzer.raw_data_for_data_view(
+            data_view=self.rich_data_view(data_view_id),
+            sort_label=sort_label,
+            sort_asc=sort_asc,
+        )
+
+        tag_map = self.tag_handler.get(data_view.dataset_id)
+        if tag_map:
+            primary_key_name = tag_map.primary_key_name
+            get_tags_by_key = tag_map.get_tags_by_key
+
+            entry_keys = [e[primary_key_name] for e in entries.values()]
+
+            tags_by_key = {key: get_tags_by_key(key) for key in entry_keys}
+        else:
+            tags_by_key = {}
+
+        return entries, tags_by_key
+
+    def transform_data_view(
+        self,
+        data_view_id: DataViewId,
+        add_transforms: TransformList,
+        del_transforms: TransformList,
+    ) -> DataView:
+        transformed_data_view = self.data_view_handler.transform_data_view(
+            data_view_id, add_transforms, del_transforms,
+        )
+        self.data_view_history_handler.set(
+            transformed_data_view.user_id,
+            transformed_data_view.dataset_id,
+            transformed_data_view.id,
+        )
+        return transformed_data_view
