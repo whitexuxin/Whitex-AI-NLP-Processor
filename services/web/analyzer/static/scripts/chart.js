@@ -386,3 +386,143 @@ class ChartManager {
     headingRow.insertCell().appendChild(createSpan({
       html: 'autocat',
       cls: 'categoryTableHeading',
+    }));
+
+    for (const category in categories) {
+      for (const subcategory of categories[category]) {
+        const row = categoryTable.insertRow();
+
+        row.insertCell().appendChild(createSpan({
+          text: category,
+          cls: 'categoryTableCategory',
+        }));
+
+        row.insertCell().appendChild(createSpan({
+          text: subcategory,
+          cls: 'categoryTableSubcategory',
+        }));
+      }
+    }
+
+    parentElement.appendChild(createDiv({
+      id: 'chartWorkingMsg',
+      html: "working...",
+      style: {
+        padding: '20px',
+      }
+    }));
+
+
+    setTimeout(() => {
+      document.getElementById('chartWorkingMsg').style.display = 'none';
+      parentElement.appendChild(categoryTable);
+    }, 750 + Math.random() * 250);
+
+  }
+
+  createExampleCharts() {
+    console.info("Creating sample charts");
+    this.createChart(Chart.TYPE_BAR, {column: 'Q1'});
+    this.createChart(Chart.TYPE_TF_IDF_OVER_VALUES, {
+      columnNameText: 'Text',
+      columnNameCategory: 'pageType',
+    });
+    this.createChart(Chart.TYPE_HISTORICAL_WORDS, {
+      text_column_name: 'Text',
+      date_time_column_name: 'StartDate',
+    });
+    this.createChart(Chart.TYPE_LINE, {column: 'Q2'});
+
+    /*
+    this.createChart(2, Chart.TYPE_HISTORICAL_WORDS, {
+      textColumn: 'Q5', dateTimeColumn: 'StartDate',
+    });
+    this.createChart(3, Chart.TYPE_HISTORICAL_BIGRAMS, {
+      textColumn: 'Q5', dataTimeColumn: 'StartDate'
+    });
+  */
+
+  }
+
+  createChart(type, parameters) {
+    const index = this.nextChartId;
+    const chartId = 'chart' + index;
+
+    const container = createDiv({
+      id: chartId + 'Container',
+      cls: 'chartContainer',
+    });
+
+    const chartElement = createArticle({
+      id: chartId,
+    });
+
+    container.appendChild(chartElement);
+
+    for (const label in parameters) {
+      const labelId = chartId + 'columnInput__' + label;
+      const dataListId = chartId + 'columnNames__' +  label;
+
+      const input = createInput({
+        id: labelId,
+        cls: 'chartColumnInput',
+        type: 'text',
+        value: parameters[label],
+        name: labelId,
+        list: dataListId,
+        keydown: e => ifEnterPressed(e, e => {
+          console.info('updating chart', label, index, e);
+          const chart = app.chartManager.chartById[index];
+          chart.parameters[label] = e.target.value;
+          chart.update();
+        }),
+      });
+
+      const columnNames = createDataList({id: dataListId});
+      for (const label of app.dataView.labels) {
+        columnNames.appendChild(createOption({value: label.name}));
+      }
+
+      container.appendChild(input);
+      container.appendChild(columnNames);
+    }
+
+    const closeButton = createButton({
+      id: chartId + 'CloseButton',
+      html: "&times;",
+      mousedown: e => ifPrimaryClick(e, () => { this.hideChartWindow(index); }),
+    });
+
+    container.appendChild(closeButton);
+    this.chartWindow.appendChild(container);
+    const chart = new Chart(chartElement, type, parameters);
+    this.chartById[index] = chart;
+    this.charts.push(chart);
+
+    return chart;
+  }
+
+  get dataView() {
+    return app.dataView;
+  }
+
+  showChartWindow() {
+    console.info('showing chartWindow');
+    show(this.chartWindow);
+  }
+
+  hideChartWindow() {
+    console.info('hiding chartWindow');
+    hide(this.chartWindow);
+  }
+
+  update() {
+    for (const chartId in this.chartById) {
+      const chart = this.chartById[chartId];
+      if (chart.isActive) {
+        console.info('updating chart', chart);
+        this.chartById[chartId].update();
+      }
+    }
+  }
+}
