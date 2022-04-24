@@ -143,4 +143,246 @@ async function fetchWordCountsOverTimeData(parameters, dataViewId, chart) {
   const url = buildRequest(services.wordCountsOverTime, {
     'text_column': parameters['column'],
     'date_time_column': parameters['columnNameDateTime'],
-    'data_v
+    'data_view_id': dataViewId,
+  });
+
+  try {
+    const response = await fetch(url);
+    if (response.status !== HTTP_OK) {
+      console.error('error processing request, status: ' + response.status);
+      return;
+    }
+
+    const result = await response.json();
+    if (!result.error) {
+      app.x_counts = result.data.counts;
+      app.x_totals = result.data.totals;
+      processWordCountsOverTimeData(result.data.counts, result.data.totals, chart);
+    } else {
+      console.error('fetchBarData error', result.error);
+    }
+  } catch(err) {
+    console.log('Fetch Error:', err);
+  }
+}
+
+async function fetchTfIdfOverValuesData(parameters, dataViewId, chart) {
+  const url = buildRequest(services.tfIdfOverValuesData, {
+    'text_column': parameters['columnNameText'],
+    'category_column': parameters['columnNameCategory'],
+    'data_view_id': dataViewId,
+  });
+
+  try {
+    const response = await fetch(url);
+    if (response.status !== HTTP_OK) {
+      console.error('error processing request, status: ' + response.status);
+      return;
+    }
+
+    const result = await response.json();
+    if (!result.error) {
+      const q = chart;
+      console.info("RESULT", result, chart, q);
+      processTfIdfOverValuesData(result.data, chart);
+    } else {
+      console.error('fetchBarData error', result.error);
+    }
+  } catch(err) {
+    console.log('Fetch Error:', err);
+  }
+}
+
+async function fetchBigramsData(columnName, dataViewId, chart) {
+  const url = buildRequest(services.bigrams, {
+    'text_column': columnName,
+    'data_view_id': dataViewId,
+  });
+
+  try {
+    const response = await fetch(url);
+    if (response.status !== HTTP_OK) {
+      console.error('error processing request, status: ' + response.status);
+      return;
+    }
+
+    const result = await response.json();
+    if (!result.error) {
+      console.info("RESULT", result);
+      processBigramsData(result.data.counts, result.data.totals, chart);
+    } else {
+      console.error('fetchBarData error', result.error);
+    }
+  } catch(err) {
+    console.log('Fetch Error:', err);
+  }
+}
+
+function processBigramsData(counts, chart) {
+  const limit = 20;
+
+  const totalsList = [];
+  for (const word in totals) {
+    totalsList.push([word, totals[word]]);
+  }
+
+  const sortedTotalsList = totalsList.sort((u, v) => { return v[1] - u[1] });
+
+  const traces = [];
+  for (let i = 0; i < limit; i++) {
+    const word = sortedTotalsList[i][0];
+    const countsOverTime = counts[word];
+    const timePoints = Array.from(Array(10).keys());
+
+    traces.push({
+      x: timePoints,
+      y: countsOverTime,
+      type: 'line',
+      name: word,
+    });
+  }
+
+  chart.drawChartMultipleTraces(traces);
+
+}
+
+class Chart {
+  static TYPE_BAR = 'bar';
+  static TYPE_LINE = 'line';
+  static TYPE_HISTORICAL_WORDS = 'historicalWords';
+  static TYPE_BIGRAMS = 'bigrams';
+  static TYPE_HISTORICAL_BIGRAMS = 'historicalBigrams';
+  static TYPE_TF_IDF_OVER_VALUES = 'tf_idf_over_values';
+
+  static defaultType = Chart.TYPE_BAR;
+
+  constructor(element, type, parameters) {
+    this.element = element;
+    this.type = type || Chart.defaultType;
+    this.parameters = parameters;
+    this.active = true;
+  }
+
+  get isActive() {
+    return this.active === true;
+  }
+
+  async update() {
+    if (!app.dataView) {
+      console.info('No DataView has been loaded, nothing to update');
+      return;
+    }
+
+    if (this.type === Chart.TYPE_BAR) {
+      console.info('type bar');
+      await fetchCountsData(this.parameters, app.dataView.id, this);
+    } else if (this.type === Chart.TYPE_LINE) {
+      await fetchCountsData(this.parameters, app.dataView.id, this);
+    } else if (this.type === Chart.TYPE_HISTORICAL_WORDS) {
+      await fetchWordCountsOverTimeData(this.parameters, app.dataView.id, this);
+    } else if (this.type === Chart.TYPE_BIGRAMS) {
+      await fetchBigramsData(this.parameters, app.dataView.id, this);
+    } else if (this.type === Chart.TYPE_HISTORICAL_BIGRAMS) {
+      await fetchWordCountsOverTimeData(this.parameters, app.dataView.id, this);
+    } else if (this.type === Chart.TYPE_TF_IDF_OVER_VALUES) {
+      await fetchTfIdfOverValuesData(this.parameters, app.dataView.id, this);
+
+    } else {
+      console.error('Unrecognized chart type:', this.type)
+    }
+  }
+
+  drawChart(x, y, doSort) {
+    const chart = this.element;
+    Plotly.newPlot(
+      chart, [{
+        x: x,
+        y: y,
+        type: this.type,
+        marker: {
+          color: 'rgba(120, 180, 200, 0.65)',
+          line: {
+            width: 2,
+            color: 'rgba(160, 180, 200, 0.95)',
+          }
+        }
+      }],
+      {
+        margin: { t: 0 },
+        autosize: false,
+        width: '150px',
+        xaxis: {'categoryorder': doSort ? 'category ascending' : 'array'},
+      },
+      { showSendToCloud: true }
+    ).then(response => {
+      console.info(response);
+    }).catch(err => {
+      console.log('Fetch Error:', err);
+    });
+  }
+
+  drawChartMultipleTraces(traces) {
+    const chart = this.element;
+    Plotly.newPlot(
+      chart,
+      traces,
+      {
+        margin: { t: 0 },
+      },
+      { showSendToCloud: true }
+    ).then(response => {
+      console.info(response);
+    }).catch(err => {
+      console.log('Fetch Error:', err);
+    });
+  }
+}
+
+class ChartManager {
+  constructor(chartWindowId, categoryWindowId) {
+    this.chartIdCounter = 0;
+    this.chartWindowId = chartWindowId;
+    this.chartWindow = null;
+    this.categoryWindow = null;
+    this.categoryWindowId = categoryWindowId;
+    this.chartById = {};
+    this.charts = [];
+  }
+
+  async init() {
+    console.group('ChartManager.init');
+    console.groupEnd();
+    return Promise.all([]);
+  }
+
+  initDisplayCharts() {
+    const display = () => {
+      this.chartWindow = document.getElementById(this.chartWindowId);
+      this.categoryWindow = document.getElementById(this.categoryWindowId);
+      // this.createCategories(this.categoryWindow);
+
+      if (Object.keys(app.chartManager.chartById).length) {
+        this.showChartWindow();
+      } else {
+        this.hideChartWindow();
+      }
+
+      this.update();
+    };
+
+    return Promise.all([display()]);
+  }
+
+  get nextChartId() {
+    return this.chartIdCounter++;
+  }
+
+  createCategories(parentElement) {
+    app.chartManager.chartById[0] = 1;
+    console.info('createCategories');
+
+    const categoryTable = createTable({id: 'categoryTable'});
+    const headingRow = categoryTable.insertRow();
+    headingRow.insertCell().appendChild(createSpan({
+      html: 'autocat',
+      cls: 'categoryTableHeading',
