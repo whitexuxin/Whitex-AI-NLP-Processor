@@ -59,4 +59,22 @@ def test_history_key():
 def test_label_set_serialization():
     label_entries = [
         {Label.KEY_NAME: "aaa", Label.KEY_WIDTH: 10, Label.KEY_FONT_SIZE: 10},
-        
+        {Label.KEY_NAME: "bbb", Label.KEY_WIDTH: 20},
+        {Label.KEY_NAME: "ccc", Label.KEY_FONT_SIZE: 30},
+        {Label.KEY_NAME: "ddd"},
+    ]
+
+    submission_entries = []
+    for entry in label_entries:
+        d = {"name": entry[Label.KEY_NAME]}
+        if Label.KEY_WIDTH in entry:
+            d["width"] = entry[Label.KEY_WIDTH]
+        if Label.KEY_FONT_SIZE in entry:
+            d["font_size"] = entry[Label.KEY_FONT_SIZE]
+        submission_entries.append(d)
+
+    label_set = LabelSet([Label(**entry) for entry in submission_entries])
+
+    serialized_label_set = label_set.serialize()
+
+    assert serialized_label_set == label_entries
